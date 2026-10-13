@@ -41,6 +41,7 @@ DEFAULT_GENRES_FILE = Path(__file__).with_name("genres.yaml")
 
 DURATION_TOLERANCE = 5.0
 SNAP_WINDOW = 3.0
+HINT_RANGE = 60.0
 MAX_GENRE_LEVELS = 4
 HOST_INTERVAL = {"musicbrainz.org": 1.0, "api.discogs.com": 1.0}
 LOSSLESS_CODECS = {"flac", "alac", "wavpack", "ape", "tta"}
@@ -532,25 +533,68 @@ def starts_from_durations(lengths: list[float]) -> list[float]:
     return starts
 
 
-def snap_boundaries(starts: list[float], silences: list[tuple[float, float]],
-                    window: float = SNAP_WINDOW) -> tuple[list[float], list[str]]:
+def parse_time(text: str) -> float:
+    """Parse "2513.7", "41:53.7" or "1:02:03.5" into seconds."""
+    if not re.fullmatch(r"\d+(:\d{1,2}){0,2}(\.\d+)?", text.strip()):
+        raise ValueError(f"bad time {text!r}. Use m:ss, h:mm:ss or seconds")
+    seconds = 0.0
+    for part in text.strip().split(":"):
+        seconds = seconds * 60 + float(part)
+    return seconds
+
+
+def parse_pin(text: str) -> tuple[str, float]:
+    """Parse a --start value like "10=41:53.7" or "2-5=3:10"."""
+    track, sep, time_text = text.partition("=")
+    if not sep or not re.fullmatch(r"(\d+-)?\d+", track.strip()):
+        raise argparse.ArgumentTypeError(f"expected TRACK=TIME, got {text!r}")
+    try:
+        return track.strip(), parse_time(time_text)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from exc
+
+
+def nearest_silence_end(target: float, silences: list[tuple[float, float]],
+                        window: float, after: float = -1.0) -> float | None:
+    best: float | None = None
+    for s, e in silences:
+        dist = 0.0 if s <= target <= e else min(abs(target - s), abs(target - e))
+        if dist <= window and e > after and (best is None or abs(e - target) < abs(best - target)):
+            best = e
+    return best
+
+
+def snap_boundaries(starts: list[float], silences: list[tuple[float, float]] | None,
+                    window: float = SNAP_WINDOW, pins: dict[int, float] | None = None
+                    ) -> tuple[list[float], list[str]]:
     """Move each track start (after the first) to the end of the nearest silence.
 
-    Returns new starts and a note per track ("" when unchanged)."""
-    out = [starts[0]]
-    notes = [""]
-    for b in starts[1:]:
-        best: float | None = None
-        for s, e in silences:
-            dist = 0.0 if s <= b <= e else min(abs(b - s), abs(b - e))
-            if dist <= window and e > out[-1] and (best is None or abs(e - b) < abs(best - b)):
-                best = e
-        if best is None:
-            out.append(b)
-            notes.append("no silence")
-        else:
+    Each expected start is shifted by the offset of the previous snap, so drift
+    doesn't add up. `pins` maps a track index to a fixed start. A pin fixes one
+    boundary and leaves the drift alone. With silences=None, only pins apply."""
+    pins = pins or {}
+    out: list[float] = []
+    notes: list[str] = []
+    offset = 0.0
+    for i, b in enumerate(starts):
+        target = b + offset
+        if i in pins:
+            out.append(pins[i])
+            notes.append("pinned")
+            continue
+        best = None
+        if i > 0 and silences is not None:
+            best = nearest_silence_end(target, silences, window, out[-1])
+        if best is not None:
+            offset = best - b
             out.append(best)
-            notes.append(f"{best - b:+.2f}s")
+            notes.append(f"{offset:+.2f}s")
+            continue
+        out.append(target)
+        if i == 0 or silences is None:
+            notes.append(f"{offset:+.2f}s" if offset else "")
+        else:
+            notes.append(f"no silence {offset:+.2f}s" if offset else "no silence")
     return out, notes
 
 
@@ -848,18 +892,38 @@ def compute_starts(args: argparse.Namespace, tracks: list[Track], probe: Probe) 
         if diff > DURATION_TOLERANCE:
             warn("file is longer than the release. The remainder stays in the last track")
 
-    notes = [""] * len(starts)
-    if args.detect_silence:
-        silences = detect_silence(Path(args.input_file), probe.duration)
-        starts, notes = snap_boundaries(starts, silences)
-        for track, note in zip(tracks, notes):
-            if note == "no silence":
-                warn(f"no silence within ±{SNAP_WINDOW:.0f}s of track {track.number} start")
+    pins = resolve_pins(args.start or [], tracks)
+    silences = detect_silence(Path(args.input_file), probe.duration) if args.detect_silence else None
+    starts, notes = snap_boundaries(starts, silences, args.snap_window, pins)
+    for i, (track, start, note) in enumerate(zip(tracks, starts, notes)):
+        if silences is not None and note.startswith("no silence"):
+            msg = f"no silence within ±{args.snap_window:g}s of track {track.number} start ({fmt_time(start)})"
+            gap = nearest_silence_end(start, silences, HINT_RANGE, starts[i - 1])
+            if gap is not None:
+                msg += (f". Nearest gap ends at {fmt_time(gap)} ({gap - start:+.1f}s). "
+                        f"Pin it with --start {track.number}={fmt_time(gap)}")
+            warn(msg)
 
-    for track, start in zip(tracks, starts):
+    for i, (track, start) in enumerate(zip(tracks, starts)):
         if start >= probe.duration:
             raise AppError(f"track {track.number} starts after the end of the file")
+        if i and start <= starts[i - 1]:
+            raise AppError(f"track {track.number} starts before track {tracks[i - 1].number}. Check --start")
     return starts, notes
+
+
+def resolve_pins(pins: list[tuple[str, float]], tracks: list[Track]) -> dict[int, float]:
+    """Map --start track keys ("10" or "2-10") to indexes in the selected tracks."""
+    out: dict[int, float] = {}
+    for key, seconds in pins:
+        matches = [i for i, t in enumerate(tracks)
+                   if key in (str(t.number), f"{t.disc}-{t.number}")]
+        if not matches:
+            raise AppError(f"--start {key}: no such track")
+        if len(matches) > 1:
+            raise AppError(f"--start {key}: several discs have this track. Use DISC-TRACK")
+        out[matches[0]] = seconds
+    return out
 
 
 def gather_mb_genres(release: Release) -> list[str]:
@@ -910,11 +974,11 @@ def print_plan(release: Release, discogs: dict[str, Any] | None, mb_genres: list
     print(f"Mode:      {mode.label}")
     print(f"Output:    {out_dir}")
     print(f"File:      {fmt_time(probe.duration)}\n")
-    print(f"  {'Start':>11}  {'End':>11}  {'Length':>10}  {'Snap':>10}  File")
+    print(f"  {'Start':>11}  {'End':>11}  {'Length':>10}  {'Snap':>17}  File")
     for seg in segments:
         end = seg.end if seg.end is not None else probe.duration
         print(f"  {fmt_time(seg.start):>11}  {fmt_time(end):>11}  {fmt_time(end - seg.start):>10}  "
-              f"{seg.note:>10}  {seg.filename}")
+              f"{seg.note:>17}  {seg.filename}")
     print("\nTags (first track):")
     for key, value in sample_tags.items():
         if value not in (None, "", []):
@@ -928,6 +992,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--discogs-release", help="Discogs release ID or URL")
     p.add_argument("--cue", help="cue sheet with split points")
     p.add_argument("--detect-silence", action="store_true", help="snap boundaries to detected silence")
+    p.add_argument("--snap-window", type=float, default=SNAP_WINDOW,
+                   help=f"max seconds to move a boundary (default {SNAP_WINDOW:g})")
+    p.add_argument("--start", type=parse_pin, action="append", metavar="TRACK=TIME",
+                   help="pin a track start, e.g. 10=41:53.7 or 2-5=3:10. Repeatable")
     p.add_argument("--disc", type=int, help="disc number when the file holds one disc")
     p.add_argument("--genre", help="override genre")
     p.add_argument("--decade", action="store_true", help="prefix decade for decade_genres (e.g. 80s/Rock)")
