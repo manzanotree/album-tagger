@@ -726,7 +726,8 @@ def tag_mp3(path: Path, tags: dict[str, Any], cover: bytes | None) -> None:
         id3.add(UFID(owner="http://musicbrainz.org", data=tags["mb_recordingid"].encode()))
     if cover:
         id3.add(APIC(encoding=3, mime=cover_mime(cover), type=3, desc="Cover", data=cover))
-    # Serato reads ID3v2.3 most reliably.
+    # Serato reads ID3v2.3 most reliably. update_to_v23 turns TDRC/TDOR into TYER/TORY.
+    id3.update_to_v23()
     id3.save(path, v2_version=3)
 
 
