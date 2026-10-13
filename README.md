@@ -31,7 +31,7 @@ Parts listed under `unrecognized` are not Discogs genres/styles. Turn them into 
 # Preview split points and tags
 uv run split_album.py album.flac --mbid 1c1f2b0e-... --dry-run
 
-# Snap to silence, append decade, non-interactive
+# Snap to silence, add decade prefix, non-interactive
 uv run split_album.py album.flac --mbid 1c1f2b0e-... --detect-silence --decade --yes
 
 # Recording that drifts from MusicBrainz lengths (captures, streams)

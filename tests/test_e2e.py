@@ -139,6 +139,9 @@ def test_split_mp3_stream_copy(mocked, tmp_path):
     assert durations(files) == pytest.approx([6.0, 5.0, 6.0], abs=0.1)
     id3 = ID3(files[0])
     assert id3.version[:2] == (2, 3)
+    raw = ID3(files[0], translate=False)
+    assert str(raw["TYER"]) == "1999" and str(raw["TORY"]) == "1987"
+    assert "TDRC" not in raw and "TDOR" not in raw
     assert id3["TCON"].text == ["Electronic/Deep House"]
     assert id3["TRCK"].text == ["1/3"]
     assert id3["UFID:http://musicbrainz.org"].data == b"rec-1"
