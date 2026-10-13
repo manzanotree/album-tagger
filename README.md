@@ -16,7 +16,7 @@ export MB_CONTACT=you@example.com # sent in the MusicBrainz User-Agent
 ## Build the genre map once
 
 ```sh
-uv run build_genre_map.py ~/Music
+uv run build_genre_map.py ~/Audio
 ```
 
 Writes `genres.yaml` from your existing genre tags. Edit it by hand. It is the source of truth.
