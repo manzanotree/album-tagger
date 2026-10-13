@@ -9,9 +9,12 @@ Needs [uv](https://docs.astral.sh/uv/) and `ffmpeg`/`ffprobe` on PATH.
 
 ```sh
 uv sync
-export DISCOGS_TOKEN=...          # https://www.discogs.com/settings/developers
-export MB_CONTACT=you@example.com # sent in the MusicBrainz User-Agent
+cp .env.example .env
 ```
+
+Fill in `.env`. `split_album.py` loads it automatically. Shell variables take precedence.
+- `DISCOGS_TOKEN`: from https://www.discogs.com/settings/developers
+- `MB_CONTACT`: an email or URL sent in the MusicBrainz User-Agent
 
 ## Build the genre map once
 
