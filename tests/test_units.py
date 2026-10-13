@@ -48,6 +48,32 @@ class TestTiming:
     def test_cumulative_durations(self):
         assert sa.starts_from_durations([61.5, 120.25, 30.0]) == [0.0, 61.5, 181.75]
 
+    @pytest.mark.parametrize("text,expected", [
+        ("2513.7", 2513.7), ("41:54", 2514.0), ("41:53.7", 2513.7), ("1:02:03.5", 3723.5),
+    ])
+    def test_parse_time(self, text, expected):
+        assert sa.parse_time(text) == pytest.approx(expected)
+
+    @pytest.mark.parametrize("text", ["", "1:2:3:4", "abc", "-5", "1:xx"])
+    def test_parse_time_rejects(self, text):
+        with pytest.raises(ValueError):
+            sa.parse_time(text)
+
+    def test_parse_pin(self):
+        assert sa.parse_pin("10=41:54") == ("10", 2514.0)
+        assert sa.parse_pin("2-5=3:10") == ("2-5", 190.0)
+        for bad in ("10", "x=1:00", "10=soon"):
+            with pytest.raises(sa.argparse.ArgumentTypeError):
+                sa.parse_pin(bad)
+
+    def test_resolve_pins(self):
+        tracks = [sa.Track(d, n, "", "", [], 1.0, "", "") for d in (1, 2) for n in (1, 2)]
+        assert sa.resolve_pins([("2-1", 5.0)], tracks) == {2: 5.0}
+        with pytest.raises(sa.AppError, match="DISC-TRACK"):
+            sa.resolve_pins([("1", 5.0)], tracks)
+        with pytest.raises(sa.AppError, match="no such track"):
+            sa.resolve_pins([("9", 5.0)], tracks)
+
     @pytest.mark.parametrize("secs,expected", [
         (0, "0:00.000"), (61.5, "1:01.500"), (3725.0004, "1:02:05.000"), (59.9996, "1:00.000"),
     ])
@@ -106,6 +132,20 @@ class TestSnapping:
     def test_custom_window(self):
         starts, _ = sa.snap_boundaries([0, 100], [(90.0, 94.0)], window=8)
         assert starts == [0, 94.0]
+
+    def test_pin_keeps_drift(self):
+        silences = [(97.0, 98.0), (170.0, 172.0), (296.0, 297.0)]
+        starts, notes = sa.snap_boundaries([0, 100, 200, 300], silences, pins={2: 172.0})
+        assert starts == [0, 98.0, 172.0, 297.0]
+        assert notes == ["", "-2.00s", "pinned", "-3.00s"]
+
+    def test_pins_without_silence_detection(self):
+        starts, notes = sa.snap_boundaries([0, 100, 200, 300], None, pins={1: 95.0})
+        assert starts == [0, 95.0, 200, 300]
+        assert notes == ["", "pinned", "", ""]
+
+    def test_no_pins_no_silences_unchanged(self):
+        assert sa.snap_boundaries([0, 100], None) == ([0, 100], ["", ""])
 
     def test_picks_nearest(self):
         starts, _ = sa.snap_boundaries([0, 100], [(97.0, 98.0), (100.5, 101.0)])
