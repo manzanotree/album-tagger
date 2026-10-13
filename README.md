@@ -34,6 +34,9 @@ uv run split_album.py album.flac --mbid 1c1f2b0e-... --dry-run
 # Snap to silence, append decade, non-interactive
 uv run split_album.py album.flac --mbid 1c1f2b0e-... --detect-silence --decade --yes
 
+# Recording that drifts from MusicBrainz lengths (captures, streams)
+uv run split_album.py capture.mp3 --mbid 1c1f2b0e-... --detect-silence --snap-window 8 --dry-run
+
 # Cue sheet, one disc of a 2-disc release
 uv run split_album.py disc2.flac --mbid 1c1f2b0e-... --cue disc2.cue --disc 2
 

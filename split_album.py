@@ -536,21 +536,25 @@ def snap_boundaries(starts: list[float], silences: list[tuple[float, float]],
                     window: float = SNAP_WINDOW) -> tuple[list[float], list[str]]:
     """Move each track start (after the first) to the end of the nearest silence.
 
-    Returns new starts and a note per track ("" when unchanged)."""
+    Each expected start is shifted by the offset of the previous snap, so small
+    per-track length errors don't add up. Returns new starts and a note per track."""
     out = [starts[0]]
     notes = [""]
+    offset = 0.0
     for b in starts[1:]:
+        target = b + offset
         best: float | None = None
         for s, e in silences:
-            dist = 0.0 if s <= b <= e else min(abs(b - s), abs(b - e))
-            if dist <= window and e > out[-1] and (best is None or abs(e - b) < abs(best - b)):
+            dist = 0.0 if s <= target <= e else min(abs(target - s), abs(target - e))
+            if dist <= window and e > out[-1] and (best is None or abs(e - target) < abs(best - target)):
                 best = e
         if best is None:
-            out.append(b)
-            notes.append("no silence")
+            out.append(target)
+            notes.append(f"no silence {offset:+.2f}s" if offset else "no silence")
         else:
+            offset = best - b
             out.append(best)
-            notes.append(f"{best - b:+.2f}s")
+            notes.append(f"{offset:+.2f}s")
     return out, notes
 
 
@@ -851,10 +855,10 @@ def compute_starts(args: argparse.Namespace, tracks: list[Track], probe: Probe) 
     notes = [""] * len(starts)
     if args.detect_silence:
         silences = detect_silence(Path(args.input_file), probe.duration)
-        starts, notes = snap_boundaries(starts, silences)
+        starts, notes = snap_boundaries(starts, silences, args.snap_window)
         for track, note in zip(tracks, notes):
-            if note == "no silence":
-                warn(f"no silence within ±{SNAP_WINDOW:.0f}s of track {track.number} start")
+            if note.startswith("no silence"):
+                warn(f"no silence within ±{args.snap_window:g}s of track {track.number} start")
 
     for track, start in zip(tracks, starts):
         if start >= probe.duration:
@@ -910,11 +914,11 @@ def print_plan(release: Release, discogs: dict[str, Any] | None, mb_genres: list
     print(f"Mode:      {mode.label}")
     print(f"Output:    {out_dir}")
     print(f"File:      {fmt_time(probe.duration)}\n")
-    print(f"  {'Start':>11}  {'End':>11}  {'Length':>10}  {'Snap':>10}  File")
+    print(f"  {'Start':>11}  {'End':>11}  {'Length':>10}  {'Snap':>17}  File")
     for seg in segments:
         end = seg.end if seg.end is not None else probe.duration
         print(f"  {fmt_time(seg.start):>11}  {fmt_time(end):>11}  {fmt_time(end - seg.start):>10}  "
-              f"{seg.note:>10}  {seg.filename}")
+              f"{seg.note:>17}  {seg.filename}")
     print("\nTags (first track):")
     for key, value in sample_tags.items():
         if value not in (None, "", []):
@@ -928,6 +932,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--discogs-release", help="Discogs release ID or URL")
     p.add_argument("--cue", help="cue sheet with split points")
     p.add_argument("--detect-silence", action="store_true", help="snap boundaries to detected silence")
+    p.add_argument("--snap-window", type=float, default=SNAP_WINDOW,
+                   help=f"max seconds to move a boundary (default {SNAP_WINDOW:g})")
     p.add_argument("--disc", type=int, help="disc number when the file holds one disc")
     p.add_argument("--genre", help="override genre")
     p.add_argument("--decade", action="store_true", help="prefix decade for decade_genres (e.g. 80s/Rock)")

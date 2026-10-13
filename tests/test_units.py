@@ -92,6 +92,21 @@ class TestSnapping:
         assert starts == [0, 100]
         assert notes[1] == "no silence"
 
+    def test_follows_drift(self):
+        silences = [(97.0, 98.0), (194.0, 195.0), (291.0, 292.0)]
+        starts, notes = sa.snap_boundaries([0, 100, 200, 300], silences)
+        assert starts == [0, 98.0, 195.0, 292.0]
+        assert notes == ["", "-2.00s", "-5.00s", "-8.00s"]
+
+    def test_unsnapped_start_keeps_drift(self):
+        starts, notes = sa.snap_boundaries([0, 100, 200], [(97.0, 98.0)])
+        assert starts == [0, 98.0, 198.0]
+        assert notes[2] == "no silence -2.00s"
+
+    def test_custom_window(self):
+        starts, _ = sa.snap_boundaries([0, 100], [(90.0, 94.0)], window=8)
+        assert starts == [0, 94.0]
+
     def test_picks_nearest(self):
         starts, _ = sa.snap_boundaries([0, 100], [(97.0, 98.0), (100.5, 101.0)])
         assert starts == [0, 101.0]
