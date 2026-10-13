@@ -206,6 +206,20 @@ class TestMode:
             sa.choose_mode("opus", "same")
 
 
+def test_load_dotenv(tmp_path, monkeypatch):
+    env = tmp_path / ".env"
+    env.write_text('# comment\nAT_A=one\nexport AT_B="two"\nAT_C=from-file\n\nbad line\n')
+    monkeypatch.delenv("AT_A", raising=False)
+    monkeypatch.delenv("AT_B", raising=False)
+    monkeypatch.setenv("AT_C", "from-shell")
+    sa.load_dotenv(env)
+    assert sa.os.environ["AT_A"] == "one"
+    assert sa.os.environ["AT_B"] == "two"
+    assert sa.os.environ["AT_C"] == "from-shell"
+    monkeypatch.delenv("AT_A")
+    monkeypatch.delenv("AT_B")
+
+
 def test_discogs_id_from():
     assert sa.discogs_id_from("12345") == "12345"
     assert sa.discogs_id_from("r12345") == "12345"

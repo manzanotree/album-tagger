@@ -996,7 +996,21 @@ def run(args: argparse.Namespace) -> None:
         info(f"wrote {dst}")
 
 
+def load_dotenv(path: Path) -> None:
+    """Set variables from a .env file. Values already in the environment win."""
+    if not path.is_file():
+        return
+    for line in path.read_text(encoding="utf-8").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#") or "=" not in line:
+            continue
+        key, value = line.split("=", 1)
+        key = key.removeprefix("export ").strip()
+        os.environ.setdefault(key, value.strip().strip("'\""))
+
+
 def main(argv: list[str] | None = None) -> int:
+    load_dotenv(Path(__file__).with_name(".env"))
     args = parse_args(argv)
     try:
         run(args)
