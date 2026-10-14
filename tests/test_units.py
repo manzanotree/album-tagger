@@ -85,7 +85,9 @@ class TestNaming:
     @pytest.mark.parametrize("raw,expected", [
         ("AC/DC", "AC-DC"),
         ("Title: Subtitle", "Title - Subtitle"),
-        ('What? "Why" <now>|*', "What_ 'Why' _now___"),
+        ('What? "Why" <now>|*', "What 'Why' _now___"),
+        ("What?", "What"),
+        ("Why? Not", "Why Not"),
         ("  ...hidden.  ", "hidden"),
         ("tab\there", "tabhere"),
         ("", "_"),
