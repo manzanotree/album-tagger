@@ -40,12 +40,17 @@ uv run split_album.py capture.mp3 --mbid 1c1f2b0e-... --detect-silence --snap-wi
 # Pin a start that silence detection can't find (the dry run suggests nearby gaps)
 uv run split_album.py capture.mp3 --mbid 1c1f2b0e-... --detect-silence --start 10=41:54
 
+# Count gaps as short as 0.3s (default 0.5s)
+uv run split_album.py album.flac --mbid 1c1f2b0e-... --detect-silence --min-silence 0.3
+
 # Cue sheet, one disc of a 2-disc release
 uv run split_album.py disc2.flac --mbid 1c1f2b0e-... --cue disc2.cue --disc 2
 
 # Search MusicBrainz from the file's tags, set genre by hand
 uv run split_album.py album.mp3 --genre "Soul/Funk/Disco"
 ```
+
+Snapped cuts land 0.1s before the end of a gap, so the next track's first sound stays whole.
 
 Output goes to `./<Album Artist>/<Album> (<Year>)/NN - Title.ext` plus `cover.jpg`.
 Multi-disc releases use `D-NN - Title.ext`.

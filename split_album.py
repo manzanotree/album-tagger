@@ -42,6 +42,8 @@ DEFAULT_GENRES_FILE = Path(__file__).with_name("genres.yaml")
 DURATION_TOLERANCE = 5.0
 SNAP_WINDOW = 3.0
 HINT_RANGE = 60.0
+MIN_SILENCE = 0.5
+SNAP_PAD = 0.1
 MAX_GENRE_LEVELS = 4
 HOST_INTERVAL = {"musicbrainz.org": 1.0, "api.discogs.com": 1.0}
 LOSSLESS_CODECS = {"flac", "alac", "wavpack", "ape", "tta"}
@@ -598,14 +600,20 @@ def snap_boundaries(starts: list[float], silences: list[tuple[float, float]] | N
     return out, notes
 
 
-def detect_silence(path: Path, duration: float, noise_db: int = -50, min_len: float = 0.5
-                   ) -> list[tuple[float, float]]:
+def detect_silence(path: Path, duration: float, noise_db: int = -50,
+                   min_len: float = MIN_SILENCE) -> list[tuple[float, float]]:
     cmd = ["ffmpeg", "-nostdin", "-hide_banner", "-i", str(path), "-map", "0:a:0",
            "-af", f"silencedetect=noise={noise_db}dB:d={min_len}", "-f", "null", "-"]
     proc = subprocess.run(cmd, capture_output=True, text=True)
     if proc.returncode != 0:
         raise AppError(f"silencedetect failed: {proc.stderr[-500:]}")
-    return parse_silences(proc.stderr, duration)
+    return pad_silences(parse_silences(proc.stderr, duration))
+
+
+def pad_silences(silences: list[tuple[float, float]], pad: float = SNAP_PAD
+                 ) -> list[tuple[float, float]]:
+    """Pull each silence end back so a cut there keeps the next track's first sound."""
+    return [(s, e - min(pad, (e - s) / 2)) for s, e in silences]
 
 
 def parse_silences(stderr: str, duration: float) -> list[tuple[float, float]]:
@@ -894,7 +902,8 @@ def compute_starts(args: argparse.Namespace, tracks: list[Track], probe: Probe) 
             warn("file is longer than the release. The remainder stays in the last track")
 
     pins = resolve_pins(args.start or [], tracks)
-    silences = detect_silence(Path(args.input_file), probe.duration) if args.detect_silence else None
+    silences = (detect_silence(Path(args.input_file), probe.duration, min_len=args.min_silence)
+                if args.detect_silence else None)
     starts, notes = snap_boundaries(starts, silences, args.snap_window, pins)
     for i, (track, start, note) in enumerate(zip(tracks, starts, notes)):
         if silences is not None and note.startswith("no silence"):
@@ -995,6 +1004,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--detect-silence", action="store_true", help="snap boundaries to detected silence")
     p.add_argument("--snap-window", type=float, default=SNAP_WINDOW,
                    help=f"max seconds to move a boundary (default {SNAP_WINDOW:g})")
+    p.add_argument("--min-silence", type=float, default=MIN_SILENCE,
+                   help=f"shortest gap in seconds that counts as silence (default {MIN_SILENCE:g})")
     p.add_argument("--start", type=parse_pin, action="append", metavar="TRACK=TIME",
                    help="pin a track start, e.g. 10=41:53.7 or 2-5=3:10. Repeatable")
     p.add_argument("--disc", type=int, help="disc number when the file holds one disc")
