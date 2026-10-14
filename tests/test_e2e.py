@@ -110,7 +110,7 @@ def test_split_flac_with_silence_snap(mocked, tmp_path):
     files = sorted(out.glob("*.flac"))
     assert [f.name for f in files] == ["01 - Tone A.flac", "02 - Tone B.flac", "03 - Tone C.flac"]
     assert (out / "cover.jpg").read_bytes() == JPEG
-    assert durations(files) == pytest.approx([6.0, 5.0, 6.0], abs=0.01)
+    assert durations(files) == pytest.approx([5.9, 5.0, 6.1], abs=0.01)
 
     tags = FLAC(files[1])
     assert tags["TITLE"] == ["Tone B"]
@@ -136,7 +136,7 @@ def test_split_mp3_stream_copy(mocked, tmp_path):
     assert rc == 0
     files = sorted(out.glob("*.mp3"))
     assert len(files) == 3
-    assert durations(files) == pytest.approx([6.0, 5.0, 6.0], abs=0.1)
+    assert durations(files) == pytest.approx([5.9, 5.0, 6.1], abs=0.1)
     id3 = ID3(files[0])
     assert id3.version[:2] == (2, 3)
     raw = ID3(files[0], translate=False)
@@ -160,13 +160,22 @@ def test_split_m4a_stream_copy(mocked, tmp_path):
                   "--genres-file", str(genres), "--out", str(out)])
     assert rc == 0
     files = sorted(out.glob("*.m4a"))
-    assert durations(files) == pytest.approx([6.0, 5.0, 6.0], abs=0.1)
+    assert durations(files) == pytest.approx([5.9, 5.0, 6.1], abs=0.1)
     tags = MP4(files[2])
     assert tags["\xa9gen"] == ["Electronic/Deep House"]
     assert tags["trkn"] == [(3, 3)]
     assert bytes(tags["----:com.apple.iTunes:MusicBrainz Track Id"][0]) == b"rec-3"
     assert bytes(tags["covr"][0]) == JPEG
     assert scan_library(out) == Counter({"Electronic/Deep House": 3})
+
+
+def test_min_silence_skips_short_gaps(mocked, tmp_path):
+    src, genres, _ = mocked
+    out = tmp_path / "out"
+    rc = sa.main([str(src), "--mbid", MBID, "--detect-silence", "--min-silence", "1.5", "--yes",
+                  "--genres-file", str(genres), "--out", str(out)])
+    assert rc == 0
+    assert durations(sorted(out.glob("*.flac"))) == pytest.approx([5.6, 5.4, 6.0], abs=0.01)
 
 
 def test_dry_run_writes_nothing(mocked, tmp_path, capsys):

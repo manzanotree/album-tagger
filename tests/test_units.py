@@ -159,6 +159,10 @@ class TestSnapping:
                   "[silencedetect @ 0x1] silence_start: 10.2\n")
         assert sa.parse_silences(stderr, 12.0) == [(0.0, 0.5), (10.2, 12.0)]
 
+    def test_pad_silences(self):
+        padded = sa.pad_silences([(10.0, 12.0), (20.0, 20.1)])
+        assert padded == [(10.0, pytest.approx(11.9)), (20.0, pytest.approx(20.05))]
+
 
 class TestGenres:
     def test_discogs_genre_and_styles(self):
