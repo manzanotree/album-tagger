@@ -300,6 +300,36 @@ def test_args_file(tmp_path, monkeypatch):
     assert args.out == tmp_path / "Out/Paul's Boutique (Remastered)"
 
 
+def test_spotify_album_id():
+    sid = "4uLU6hMCjMI75M1A2tKUQC"
+    assert sa.spotify_album_id(f"https://open.spotify.com/album/{sid}?si=abc") == sid
+    assert sa.spotify_album_id(f"https://open.spotify.com/intl-de/album/{sid}") == sid
+    assert sa.spotify_album_id(f"spotify:album:{sid}") == sid
+    assert sa.spotify_album_id(sid) == sid
+    with pytest.raises(sa.AppError):
+        sa.spotify_album_id("https://open.spotify.com/track/short")
+
+
+def make_track(disc, number, length):
+    return sa.Track(disc, number, f"T{number}", "A", [], length, "", "")
+
+
+def test_apply_spotify_lengths(capsys):
+    tracks = [make_track(1, 1, 100.0), make_track(1, 2, 200.0)]
+    sa.apply_spotify_lengths(tracks, {(1, 1): 100.5, (1, 2): 184.0, (2, 1): 50.0})
+    assert [t.length for t in tracks] == [100.5, 184.0]
+    err = capsys.readouterr().err
+    assert "track 2" in err and "track 1:" not in err
+
+
+def test_apply_spotify_lengths_count_mismatch():
+    tracks = [make_track(1, 1, 100.0), make_track(1, 2, 200.0)]
+    with pytest.raises(sa.AppError, match="Spotify has 3 tracks"):
+        sa.apply_spotify_lengths(tracks, {(1, 1): 1.0, (1, 2): 2.0, (1, 3): 3.0})
+    with pytest.raises(sa.AppError, match="Spotify has 1 tracks"):
+        sa.apply_spotify_lengths(tracks, {(1, 1): 1.0})
+
+
 def test_discogs_id_from():
     assert sa.discogs_id_from("12345") == "12345"
     assert sa.discogs_id_from("r12345") == "12345"
