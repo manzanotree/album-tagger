@@ -37,6 +37,9 @@ from build_genre_map import DEFAULT_ALIASES, load_genre_config, save_genre_confi
 VERSION = "0.1.0"
 MB_API = "https://musicbrainz.org/ws/2"
 DISCOGS_API = "https://api.discogs.com"
+SPOTIFY_API = "https://api.spotify.com/v1"
+SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
+SPOTIFY_DIFF_NOTE = 2.0
 CAA = "https://coverartarchive.org"
 DEFAULT_GENRES_FILE = Path(__file__).with_name("genres.yaml")
 
@@ -346,6 +349,61 @@ def search_discogs(release: Release, assume_yes: bool) -> str | None:
     options = [f"{r.get('title')} ({r.get('year', '?')}, {r.get('country', '?')}, "
                f"{', '.join(r.get('format', []))}, {r.get('catno', '')}) [r{r['id']}]" for r in results]
     return str(results[choose("Discogs matches", options, assume_yes)]["id"])
+
+
+# ---------------------------------------------------------------- Spotify
+
+def spotify_album_id(text: str) -> str:
+    """Album ID from an open.spotify.com URL, a spotify:album: URI or a bare ID."""
+    m = re.search(r"album[/:]([A-Za-z0-9]{22})", text) or re.fullmatch(r"\s*([A-Za-z0-9]{22})\s*", text)
+    if not m:
+        raise AppError(f"cannot parse Spotify album from {text!r}")
+    return m.group(1)
+
+
+def spotify_token() -> str:
+    client_id = os.environ.get("SPOTIFY_CLIENT_ID")
+    secret = os.environ.get("SPOTIFY_CLIENT_SECRET")
+    if not client_id or not secret:
+        raise AppError("--spotify needs SPOTIFY_CLIENT_ID and SPOTIFY_CLIENT_SECRET")
+    try:
+        resp = requests.post(SPOTIFY_TOKEN_URL, data={"grant_type": "client_credentials"},
+                             auth=(client_id, secret), timeout=30)
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        raise AppError(f"Spotify token request failed: {type(exc).__name__}") from exc
+    if resp.status_code != 200:
+        raise AppError(f"Spotify token request failed: HTTP {resp.status_code} {resp.text[:200]}")
+    return resp.json()["access_token"]
+
+
+def fetch_spotify_lengths(arg: str) -> dict[tuple[int, int], float]:
+    """Track lengths in seconds keyed by (disc, track number)."""
+    headers = {"Authorization": f"Bearer {spotify_token()}"}
+    url: str | None = f"{SPOTIFY_API}/albums/{spotify_album_id(arg)}/tracks"
+    params: dict[str, Any] | None = {"limit": 50}
+    lengths: dict[tuple[int, int], float] = {}
+    while url:
+        page = get_json(url, params, headers)
+        for t in page.get("items", []):
+            lengths[(t["disc_number"], t["track_number"])] = t["duration_ms"] / 1000
+        url, params = page.get("next"), None
+    return lengths
+
+
+def apply_spotify_lengths(tracks: list[Track], lengths: dict[tuple[int, int], float]) -> None:
+    """Replace MusicBrainz lengths with Spotify's and report tracks that differ."""
+    discs = {t.disc for t in tracks}
+    extra = [k for k in lengths if k[0] in discs and k not in {(t.disc, t.number) for t in tracks}]
+    missing = [t for t in tracks if (t.disc, t.number) not in lengths]
+    if missing or extra:
+        raise AppError(f"Spotify has {sum(k[0] in discs for k in lengths)} tracks, "
+                       f"MusicBrainz has {len(tracks)}. Wrong album?")
+    for t in tracks:
+        new = lengths[(t.disc, t.number)]
+        if t.length is not None and abs(new - t.length) > SPOTIFY_DIFF_NOTE:
+            info(f"track {t.number}: Spotify {fmt_time(new)}, MusicBrainz {fmt_time(t.length)} "
+                 f"({new - t.length:+.1f}s)")
+        t.length = new
 
 
 # ---------------------------------------------------------------- genres
@@ -1009,6 +1067,7 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--mbid", help="MusicBrainz release ID (searched from tags if omitted)")
     p.add_argument("--discogs-release", help="Discogs release ID or URL")
     p.add_argument("--cue", help="cue sheet with split points")
+    p.add_argument("--spotify", metavar="ALBUM", help="take track lengths from a Spotify album URL or ID")
     p.add_argument("--detect-silence", action="store_true", help="snap boundaries to detected silence")
     p.add_argument("--snap-window", type=float, default=SNAP_WINDOW,
                    help=f"max seconds to move a boundary (default {SNAP_WINDOW:g})")
@@ -1044,6 +1103,9 @@ def run(args: argparse.Namespace) -> None:
     tracks = select_tracks(release, args.disc)
     if not tracks:
         raise AppError("release has no tracks")
+    if args.spotify:
+        apply_spotify_lengths(tracks, fetch_spotify_lengths(args.spotify))
+        info("Track lengths: Spotify")
 
     discogs = None if args.genre else resolve_discogs(args.discogs_release, release, args.yes)
     mb_genres: list[str] = []

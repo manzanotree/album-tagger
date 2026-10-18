@@ -15,6 +15,8 @@ cp .env.example .env
 Fill in `.env`. `split_album.py` loads it automatically. Shell variables take precedence.
 - `DISCOGS_TOKEN`: from https://www.discogs.com/settings/developers
 - `MB_CONTACT`: an email or URL sent in the MusicBrainz User-Agent
+- `SPOTIFY_CLIENT_ID`, `SPOTIFY_CLIENT_SECRET`: optional, for `--spotify`. Create an app at
+  https://developer.spotify.com/dashboard (the owner needs Premium)
 
 ## Build the genre map once
 
@@ -39,6 +41,9 @@ uv run split_album.py capture.mp3 --mbid 1c1f2b0e-... --detect-silence --snap-wi
 
 # Pin a start that silence detection can't find (the dry run suggests nearby gaps)
 uv run split_album.py capture.mp3 --mbid 1c1f2b0e-... --detect-silence --start 10=41:54
+
+# Recorded from Spotify: take track lengths from the same Spotify album
+uv run split_album.py capture.flac --mbid 1c1f2b0e-... --spotify https://open.spotify.com/album/...
 
 # Count gaps as short as 0.3s (default 0.5s)
 uv run split_album.py album.flac --mbid 1c1f2b0e-... --detect-silence --min-silence 0.3
@@ -74,6 +79,10 @@ Options after the file are added. Later values win, and `--start` pins add up.
 Files named `*.args` are ignored by git.
 
 Snapped cuts land 0.1s before the end of a gap, so the next track's first sound stays whole.
+
+`--spotify` keeps MusicBrainz for tags and IDs and only swaps in Spotify's track lengths.
+Tracks match by disc and number. Lengths that differ by more than 2s are listed.
+Turn off Crossfade and Automix in Spotify when recording.
 
 Output goes to `./<Album Artist>/<Album> (<Year>)/NN - Title.ext` plus `cover.jpg`.
 Multi-disc releases use `D-NN - Title.ext`.

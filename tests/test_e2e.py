@@ -178,6 +178,34 @@ def test_min_silence_skips_short_gaps(mocked, tmp_path):
     assert durations(sorted(out.glob("*.flac"))) == pytest.approx([5.6, 5.4, 6.0], abs=0.01)
 
 
+def test_spotify_lengths(mocked, tmp_path, monkeypatch):
+    src, genres, _ = mocked
+    sid = "4uLU6hMCjMI75M1A2tKUQC"
+    inner = sa.http_get
+    pages = {
+        f"{sa.SPOTIFY_API}/albums/{sid}/tracks": {
+            "items": [{"disc_number": 1, "track_number": 1, "duration_ms": 6000},
+                      {"disc_number": 1, "track_number": 2, "duration_ms": 5000}],
+            "next": "https://api.spotify.com/v1/next-page"},
+        "https://api.spotify.com/v1/next-page": {
+            "items": [{"disc_number": 1, "track_number": 3, "duration_ms": 6000}], "next": None},
+    }
+
+    def fake_get(url, params=None, headers=None, retries=5):
+        if url in pages:
+            assert headers["Authorization"] == "Bearer tok"
+            return FakeResponse(payload=pages[url])
+        return inner(url, params, headers, retries)
+
+    monkeypatch.setattr(sa, "http_get", fake_get)
+    monkeypatch.setattr(sa, "spotify_token", lambda: "tok")
+    out = tmp_path / "out"
+    rc = sa.main([str(src), "--mbid", MBID, "--spotify", f"https://open.spotify.com/album/{sid}",
+                  "--yes", "--genres-file", str(genres), "--out", str(out)])
+    assert rc == 0
+    assert durations(sorted(out.glob("*.flac"))) == pytest.approx([6.0, 5.0, 6.0], abs=0.01)
+
+
 def test_dry_run_writes_nothing(mocked, tmp_path, capsys):
     src, genres, calls = mocked
     out = tmp_path / "out"
