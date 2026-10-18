@@ -617,12 +617,9 @@ def parse_pin(text: str) -> tuple[str, float]:
 
 def nearest_silence_end(target: float, silences: list[tuple[float, float]],
                         window: float, after: float = -1.0) -> float | None:
-    best: float | None = None
-    for s, e in silences:
-        dist = 0.0 if s <= target <= e else min(abs(target - s), abs(target - e))
-        if dist <= window and e > after and (best is None or abs(e - target) < abs(best - target)):
-            best = e
-    return best
+    """End of the silence whose end is closest to target, within window."""
+    ends = [e for _, e in silences if abs(e - target) <= window and e > after]
+    return min(ends, key=lambda e: abs(e - target), default=None)
 
 
 def snap_boundaries(starts: list[float], silences: list[tuple[float, float]] | None,

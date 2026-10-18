@@ -111,9 +111,14 @@ class TestSnapping:
         assert starts == [0, 99.5, 202.0]
         assert notes == ["", "-0.50s", "+2.00s"]
 
-    def test_inside_silence(self):
-        starts, _ = sa.snap_boundaries([0, 100], [(99.0, 104.0)])
-        assert starts == [0, 104.0]
+    def test_inside_silence_ending_near(self):
+        starts, _ = sa.snap_boundaries([0, 100], [(95.0, 101.0)])
+        assert starts == [0, 101.0]
+
+    def test_inside_long_silence_keeps_start(self):
+        starts, notes = sa.snap_boundaries([0, 100], [(99.0, 104.0)])
+        assert starts == [0, 100]
+        assert notes[1] == "no silence"
 
     def test_no_silence_in_window(self):
         starts, notes = sa.snap_boundaries([0, 100], [(90.0, 95.0), (104.0, 105.0)])
