@@ -281,6 +281,25 @@ def test_load_dotenv(tmp_path, monkeypatch):
     monkeypatch.delenv("AT_B")
 
 
+def test_args_file(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    args_file = tmp_path / "album.args"
+    args_file.write_text(
+        "# split settings\n"
+        "~/in/album.flac\n"
+        '--genre "Hip Hop" --force\n'
+        "--start 10=26:02.2\n"
+        "# --start 11=29:30.9\n"
+        "--out \"~/Out/Paul's Boutique (Remastered)\"\n"
+    )
+    args = sa.parse_args([f"@{args_file}", "--start", "12=33:09.85", "--dry-run"])
+    assert args.input_file == str(tmp_path / "in/album.flac")
+    assert args.genre == "Hip Hop"
+    assert args.force and args.dry_run
+    assert args.start == [("10", 1562.2), ("12", 1989.85)]
+    assert args.out == tmp_path / "Out/Paul's Boutique (Remastered)"
+
+
 def test_discogs_id_from():
     assert sa.discogs_id_from("12345") == "12345"
     assert sa.discogs_id_from("r12345") == "12345"

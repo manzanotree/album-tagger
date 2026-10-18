@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -995,8 +996,15 @@ def print_plan(release: Release, discogs: dict[str, Any] | None, mb_genres: list
             print(f"  {key:<20} {', '.join(as_list(value))}")
 
 
+class ArgsFileParser(argparse.ArgumentParser):
+    """Reads @file arguments with shell quoting, # comments and ~ expansion."""
+
+    def convert_arg_line_to_args(self, arg_line: str) -> list[str]:
+        return [os.path.expanduser(a) for a in shlex.split(arg_line, comments=True)]
+
+
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
-    p = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    p = ArgsFileParser(description=__doc__.splitlines()[0], fromfile_prefix_chars="@")
     p.add_argument("input_file")
     p.add_argument("--mbid", help="MusicBrainz release ID (searched from tags if omitted)")
     p.add_argument("--discogs-release", help="Discogs release ID or URL")

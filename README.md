@@ -50,6 +50,29 @@ uv run split_album.py disc2.flac --mbid 1c1f2b0e-... --cue disc2.cue --disc 2
 uv run split_album.py album.mp3 --genre "Soul/Funk/Disco"
 ```
 
+### Args files
+
+For many attempts, keep the options in a file. Use one or more options per line,
+with shell quoting. Lines starting with `#` are skipped and `~` is expanded.
+
+```
+# album.args
+~/Audio/Capture/album.flac
+--mbid 1c1f2b0e-...
+--genre "Hip Hop"
+--detect-silence --min-silence 0.3 --force
+--start 10=26:02.2
+--out "~/Audio/Staging/Artist/Album"
+```
+
+```sh
+uv run split_album.py @album.args
+uv run split_album.py @album.args --dry-run
+```
+
+Options after the file are added. Later values win, and `--start` pins add up.
+Files named `*.args` are ignored by git.
+
 Snapped cuts land 0.1s before the end of a gap, so the next track's first sound stays whole.
 
 Output goes to `./<Album Artist>/<Album> (<Year>)/NN - Title.ext` plus `cover.jpg`.
