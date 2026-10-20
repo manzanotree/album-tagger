@@ -1050,18 +1050,21 @@ def print_plan(release: Release, discogs: dict[str, Any] | None, mb_genres: list
         end = seg.end if seg.end is not None else probe.duration
         print(f"  {fmt_time(seg.start):>11}  {fmt_time(end):>11}  {fmt_time(end - seg.start):>10}  "
               f"{seg.note:>17}  {seg.filename}")
-    pinned = [seg for seg in segments if seg.unpinned is not None]
-    if pinned:
-        multi_disc = len(release.media) > 1
-        print(f"\nPins:\n  {'Track':>5}  {'Unpinned':>11}  {'Pinned':>11}  {'Change':>8}")
-        for seg in pinned:
-            label = f"{seg.track.disc}-{seg.track.number}" if multi_disc else str(seg.track.number)
-            print(f"  {label:>5}  {fmt_time(seg.unpinned):>11}  {fmt_time(seg.start):>11}  "
-                  f"{seg.start - seg.unpinned:>+7.2f}s")
     print("\nTags (first track):")
     for key, value in sample_tags.items():
         if value not in (None, "", []):
             print(f"  {key:<20} {', '.join(as_list(value))}")
+
+
+def print_pins(segments: list[Segment], multi_disc: bool) -> None:
+    pinned = [seg for seg in segments if seg.unpinned is not None]
+    if not pinned:
+        return
+    print(f"\nPins:\n  {'Track':>5}  {'Unpinned':>11}  {'Pinned':>11}  {'Change':>8}")
+    for seg in pinned:
+        label = f"{seg.track.disc}-{seg.track.number}" if multi_disc else str(seg.track.number)
+        print(f"  {label:>5}  {fmt_time(seg.unpinned):>11}  {fmt_time(seg.start):>11}  "
+              f"{seg.start - seg.unpinned:>+7.2f}s")
 
 
 class ArgsFileParser(argparse.ArgumentParser):
@@ -1143,6 +1146,7 @@ def run(args: argparse.Namespace) -> None:
     all_tags = [build_tags(release, seg.track, genre, discogs_id) for seg in segments]
     print_plan(release, discogs, mb_genres, genre, mode, out_dir, segments, probe, all_tags[0])
     if args.dry_run:
+        print_pins(segments, multi_disc)
         return
 
     cover = fetch_cover(release)
@@ -1154,6 +1158,7 @@ def run(args: argparse.Namespace) -> None:
         ffmpeg_cut(src, dst, seg.start, seg.end, mode, probe.sample_rate)
         write_tags(dst, tags, cover)
         info(f"wrote {dst}")
+    print_pins(segments, multi_disc)
 
 
 def load_dotenv(path: Path) -> None:
