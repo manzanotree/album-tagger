@@ -624,25 +624,28 @@ def nearest_silence_end(target: float, silences: list[tuple[float, float]],
 
 def snap_boundaries(starts: list[float], silences: list[tuple[float, float]] | None,
                     window: float = SNAP_WINDOW, pins: dict[int, float] | None = None
-                    ) -> tuple[list[float], list[str]]:
+                    ) -> tuple[list[float], list[str], dict[int, float]]:
     """Move each track start (after the first) to the end of the nearest silence.
 
     Each expected start is shifted by the offset of the previous snap, so drift
     doesn't add up. `pins` maps a track index to a fixed start. A pin fixes one
-    boundary and leaves the drift alone. With silences=None, only pins apply."""
+    boundary and leaves the drift alone. With silences=None, only pins apply.
+    Also returns the start each pinned track would have had without its pin."""
     pins = pins or {}
     out: list[float] = []
     notes: list[str] = []
+    unpinned: dict[int, float] = {}
     offset = 0.0
     for i, b in enumerate(starts):
         target = b + offset
-        if i in pins:
-            out.append(pins[i])
-            notes.append("pinned")
-            continue
         best = None
         if i > 0 and silences is not None:
             best = nearest_silence_end(target, silences, window, out[-1])
+        if i in pins:
+            unpinned[i] = best if best is not None else target
+            out.append(pins[i])
+            notes.append("pinned")
+            continue
         if best is not None:
             offset = best - b
             out.append(best)
@@ -653,7 +656,7 @@ def snap_boundaries(starts: list[float], silences: list[tuple[float, float]] | N
             notes.append(f"{offset:+.2f}s" if offset else "")
         else:
             notes.append(f"no silence {offset:+.2f}s" if offset else "no silence")
-    return out, notes
+    return out, notes, unpinned
 
 
 def detect_silence(path: Path, duration: float, noise_db: int = -50,
@@ -913,6 +916,7 @@ class Segment:
     end: float | None
     note: str
     filename: str
+    unpinned: float | None = None
 
 
 def check_tools() -> None:
@@ -929,7 +933,8 @@ def select_tracks(release: Release, disc: int | None) -> list[Track]:
     return release.media[disc - 1]
 
 
-def compute_starts(args: argparse.Namespace, tracks: list[Track], probe: Probe) -> tuple[list[float], list[str]]:
+def compute_starts(args: argparse.Namespace, tracks: list[Track], probe: Probe
+                   ) -> tuple[list[float], list[str], dict[int, float]]:
     lengths = [t.length for t in tracks]
     expected = sum(lengths) if all(l is not None for l in lengths) else None  # type: ignore[misc]
 
@@ -960,7 +965,7 @@ def compute_starts(args: argparse.Namespace, tracks: list[Track], probe: Probe) 
     pins = resolve_pins(args.start or [], tracks)
     silences = (detect_silence(Path(args.input_file), probe.duration, min_len=args.min_silence)
                 if args.detect_silence else None)
-    starts, notes = snap_boundaries(starts, silences, args.snap_window, pins)
+    starts, notes, unpinned = snap_boundaries(starts, silences, args.snap_window, pins)
     for i, (track, start, note) in enumerate(zip(tracks, starts, notes)):
         if silences is not None and note.startswith("no silence"):
             msg = f"no silence within ±{args.snap_window:g}s of track {track.number} start ({fmt_time(start)})"
@@ -975,7 +980,7 @@ def compute_starts(args: argparse.Namespace, tracks: list[Track], probe: Probe) 
             raise AppError(f"track {track.number} starts after the end of the file")
         if i and start <= starts[i - 1]:
             raise AppError(f"track {track.number} starts before track {tracks[i - 1].number}. Check --start")
-    return starts, notes
+    return starts, notes, unpinned
 
 
 def resolve_pins(pins: list[tuple[str, float]], tracks: list[Track]) -> dict[int, float]:
@@ -1045,6 +1050,14 @@ def print_plan(release: Release, discogs: dict[str, Any] | None, mb_genres: list
         end = seg.end if seg.end is not None else probe.duration
         print(f"  {fmt_time(seg.start):>11}  {fmt_time(end):>11}  {fmt_time(end - seg.start):>10}  "
               f"{seg.note:>17}  {seg.filename}")
+    pinned = [seg for seg in segments if seg.unpinned is not None]
+    if pinned:
+        multi_disc = len(release.media) > 1
+        print(f"\nPins:\n  {'Track':>5}  {'Unpinned':>11}  {'Pinned':>11}  {'Change':>8}")
+        for seg in pinned:
+            label = f"{seg.track.disc}-{seg.track.number}" if multi_disc else str(seg.track.number)
+            print(f"  {label:>5}  {fmt_time(seg.unpinned):>11}  {fmt_time(seg.start):>11}  "
+                  f"{seg.start - seg.unpinned:>+7.2f}s")
     print("\nTags (first track):")
     for key, value in sample_tags.items():
         if value not in (None, "", []):
@@ -1118,11 +1131,11 @@ def run(args: argparse.Namespace) -> None:
             warn(w)
         genre = confirm_genre(result, cfg, args.genres_file, not (args.yes or args.dry_run))
 
-    starts, notes = compute_starts(args, tracks, probe)
+    starts, notes, unpinned = compute_starts(args, tracks, probe)
     multi_disc = len(release.media) > 1
     segments = [
         Segment(t, s, starts[i + 1] if i + 1 < len(starts) else None, notes[i],
-                track_filename(t, len(tracks), multi_disc, mode.ext))
+                track_filename(t, len(tracks), multi_disc, mode.ext), unpinned.get(i))
         for i, (t, s) in enumerate(zip(tracks, starts))
     ]
     out_dir = args.out or default_out_dir(release)
