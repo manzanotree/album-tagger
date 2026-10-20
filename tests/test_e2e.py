@@ -220,6 +220,17 @@ def test_dry_run_writes_nothing(mocked, tmp_path, capsys):
     assert "01 - Tone A.flac" in text
 
 
+@pytest.mark.parametrize("mode", ["--dry-run", "--yes"])
+def test_pins_print_last(mocked, tmp_path, capsys, mode):
+    src, genres, _ = mocked
+    rc = sa.main([str(src), "--mbid", MBID, mode, "--start", "2=6.5",
+                  "--genres-file", str(genres), "--out", str(tmp_path / "out")])
+    assert rc == 0
+    text = capsys.readouterr().out
+    assert text.rstrip().endswith("Pins:\n  Track     Unpinned       Pinned    Change\n"
+                                  "      2     0:05.600     0:06.500    +0.90s")
+
+
 def test_duration_mismatch_aborts(mocked, tmp_path, monkeypatch, capsys):
     src, genres, _ = mocked
     monkeypatch.setattr(sa, "fetch_release", lambda mbid: sa.parse_release(mb_release([5000, 4000, 2000])))

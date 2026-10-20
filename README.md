@@ -76,6 +76,7 @@ uv run split_album.py @album.args --dry-run
 ```
 
 Options after the file are added. Later values win, and `--start` pins add up.
+The plan lists each pin with the start it replaced, so you can adjust it by hand.
 Files named `*.args` are ignored by git.
 
 Snapped cuts land 0.1s before the end of a gap, so the next track's first sound stays whole.
