@@ -40,6 +40,8 @@ DISCOGS_API = "https://api.discogs.com"
 SPOTIFY_API = "https://api.spotify.com/v1"
 SPOTIFY_TOKEN_URL = "https://accounts.spotify.com/api/token"
 SPOTIFY_DIFF_NOTE = 2.0
+COVER_RETRIES = 2
+COVER_TIMEOUT = 10
 CAA = "https://coverartarchive.org"
 DEFAULT_GENRES_FILE = Path(__file__).with_name("genres.yaml")
 
@@ -82,8 +84,8 @@ def user_agent() -> str:
     return f"album-tagger/{VERSION} ( {contact} )"
 
 
-def http_get(url: str, params: dict[str, Any] | None = None,
-             headers: dict[str, str] | None = None, retries: int = 5) -> requests.Response:
+def http_get(url: str, params: dict[str, Any] | None = None, headers: dict[str, str] | None = None,
+             retries: int = 5, timeout: float = 30) -> requests.Response:
     """GET with per-host rate limiting and retry on network errors, 429 and 5xx."""
     host = urlparse(url).hostname or ""
     hdrs = {"User-Agent": user_agent(), **(headers or {})}
@@ -95,7 +97,7 @@ def http_get(url: str, params: dict[str, Any] | None = None,
         _last_request[host] = time.monotonic()
         delay = float(2 ** attempt)
         try:
-            resp = requests.get(url, params=params, headers=hdrs, timeout=30)
+            resp = requests.get(url, params=params, headers=hdrs, timeout=timeout)
         except (requests.ConnectionError, requests.Timeout) as exc:
             err = type(exc).__name__
         else:
@@ -388,6 +390,17 @@ def fetch_spotify_lengths(arg: str) -> dict[tuple[int, int], float]:
             lengths[(t["disc_number"], t["track_number"])] = t["duration_ms"] / 1000
         url, params = page.get("next"), None
     return lengths
+
+
+def fetch_spotify_cover(arg: str) -> bytes | None:
+    """Largest album image from Spotify."""
+    headers = {"Authorization": f"Bearer {spotify_token()}"}
+    album = get_json(f"{SPOTIFY_API}/albums/{spotify_album_id(arg)}", None, headers)
+    images = sorted(album.get("images", []), key=lambda i: i.get("width") or 0, reverse=True)
+    if not images:
+        return None
+    resp = http_get(images[0]["url"], retries=COVER_RETRIES, timeout=COVER_TIMEOUT)
+    return resp.content if resp.status_code == 200 and resp.content else None
 
 
 def apply_spotify_lengths(tracks: list[Track], lengths: dict[tuple[int, int], float]) -> None:
@@ -869,20 +882,33 @@ def tag_m4a(path: Path, tags: dict[str, Any], cover: bytes | None) -> None:
     audio.save()
 
 
-def fetch_cover(release: Release) -> bytes | None:
+def fetch_cover(release: Release, spotify: str | None = None) -> bytes | None:
+    """Front cover from the Cover Art Archive, else from Spotify when given."""
     urls = [f"{CAA}/release/{release.mbid}/front-500"]
     if release.release_group_id:
         urls.append(f"{CAA}/release-group/{release.release_group_id}/front-500")
     for url in urls:
         try:
-            resp = http_get(url)
+            resp = http_get(url, retries=COVER_RETRIES, timeout=COVER_TIMEOUT)
         except AppError as exc:
             warn(f"cover art: {exc}")
-            return None
+            break
         if resp.status_code == 200 and resp.content:
             return resp.content
-    warn("no cover art on the Cover Art Archive")
-    return None
+    else:
+        warn("no cover art on the Cover Art Archive")
+    if not spotify:
+        return None
+    try:
+        cover = fetch_spotify_cover(spotify)
+    except AppError as exc:
+        warn(f"Spotify cover art: {exc}")
+        return None
+    if cover:
+        info("Cover art: Spotify")
+    else:
+        warn("no cover art on Spotify")
+    return cover
 
 
 # ---------------------------------------------------------------- naming
@@ -1149,7 +1175,7 @@ def run(args: argparse.Namespace) -> None:
         print_pins(segments, multi_disc)
         return
 
-    cover = fetch_cover(release)
+    cover = fetch_cover(release, args.spotify)
     out_dir.mkdir(parents=True, exist_ok=True)
     if cover:
         (out_dir / ("cover.png" if cover_mime(cover) == "image/png" else "cover.jpg")).write_bytes(cover)
