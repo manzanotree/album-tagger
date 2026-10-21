@@ -69,7 +69,7 @@ def mocked(monkeypatch, tmp_path):
     # MB lengths are off by up to 0.8s so --detect-silence must fix them.
     release = mb_release([5600, 5400, 6000])
 
-    def fake_get(url, params=None, headers=None, retries=5):
+    def fake_get(url, params=None, headers=None, retries=5, timeout=30):
         calls.append(url)
         if url.startswith(f"{sa.MB_API}/release/{MBID}"):
             return FakeResponse(payload=release)
@@ -191,11 +191,11 @@ def test_spotify_lengths(mocked, tmp_path, monkeypatch):
             "items": [{"disc_number": 1, "track_number": 3, "duration_ms": 6000}], "next": None},
     }
 
-    def fake_get(url, params=None, headers=None, retries=5):
+    def fake_get(url, params=None, headers=None, retries=5, timeout=30):
         if url in pages:
             assert headers["Authorization"] == "Bearer tok"
             return FakeResponse(payload=pages[url])
-        return inner(url, params, headers, retries)
+        return inner(url, params, headers, retries, timeout)
 
     monkeypatch.setattr(sa, "http_get", fake_get)
     monkeypatch.setattr(sa, "spotify_token", lambda: "tok")
@@ -204,6 +204,36 @@ def test_spotify_lengths(mocked, tmp_path, monkeypatch):
                   "--yes", "--genres-file", str(genres), "--out", str(out)])
     assert rc == 0
     assert durations(sorted(out.glob("*.flac"))) == pytest.approx([6.0, 5.0, 6.0], abs=0.01)
+
+
+def test_spotify_cover_when_caa_fails(mocked, tmp_path, monkeypatch):
+    src, genres, _ = mocked
+    sid = "4uLU6hMCjMI75M1A2tKUQC"
+    art = b"\xff\xd8\xff\xe0spotify"
+    inner = sa.http_get
+    seen = []
+
+    def fake_get(url, params=None, headers=None, retries=5, timeout=30):
+        if url.startswith(sa.CAA):
+            seen.append((retries, timeout))
+            raise sa.AppError("archive.org: giving up after 2 attempts (ReadTimeout)")
+        if url == f"{sa.SPOTIFY_API}/albums/{sid}":
+            return FakeResponse(payload={"images": [{"url": "https://i.scdn.co/small", "width": 64},
+                                                    {"url": "https://i.scdn.co/big", "width": 640}]})
+        if url == "https://i.scdn.co/big":
+            return FakeResponse(content=art)
+        return inner(url, params, headers, retries, timeout)
+
+    monkeypatch.setattr(sa, "http_get", fake_get)
+    monkeypatch.setattr(sa, "spotify_token", lambda: "tok")
+    monkeypatch.setattr(sa, "fetch_spotify_lengths", lambda arg: {(1, 1): 5.6, (1, 2): 5.4, (1, 3): 6.0})
+    out = tmp_path / "out"
+    rc = sa.main([str(src), "--mbid", MBID, "--spotify", sid, "--yes",
+                  "--genres-file", str(genres), "--out", str(out)])
+    assert rc == 0
+    assert seen == [(sa.COVER_RETRIES, sa.COVER_TIMEOUT)]
+    assert (out / "cover.jpg").read_bytes() == art
+    assert FLAC(out / "01 - Tone A.flac").pictures[0].data == art
 
 
 def test_dry_run_writes_nothing(mocked, tmp_path, capsys):
