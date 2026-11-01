@@ -84,6 +84,9 @@ Snapped cuts land 0.1s before the end of a gap, so the next track's first sound 
 `--spotify` keeps MusicBrainz for tags and IDs and only swaps in Spotify's track lengths.
 Tracks match by disc and number. Lengths that differ by more than 2s are listed.
 If the Cover Art Archive has no cover or doesn't respond, the cover comes from Spotify.
+
+`--tracks 1-12` (or `1-10,12`) splits only those MusicBrainz tracks. Use it when the closest
+release has extra tracks. Track total tags count only the kept tracks.
 Turn off Crossfade and Automix in Spotify when recording.
 
 Output goes to `./<Album Artist>/<Album> (<Year>)/NN - Title.ext` plus `cover.jpg`.

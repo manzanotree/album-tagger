@@ -269,3 +269,16 @@ def test_duration_mismatch_aborts(mocked, tmp_path, monkeypatch, capsys):
     assert "--force" in capsys.readouterr().err
     rc = sa.main([str(src), "--mbid", MBID, "--yes", "--dry-run", "--force", "--genres-file", str(genres)])
     assert rc == 0
+
+
+def test_tracks_drops_extra_release_tracks(mocked, tmp_path, monkeypatch):
+    src, genres, _ = mocked
+    longer = mb_release([5600, 5400, 6000, 3000, 4000])
+    monkeypatch.setattr(sa, "fetch_release", lambda mbid: sa.parse_release(longer))
+    out = tmp_path / "out"
+    rc = sa.main([str(src), "--mbid", MBID, "--tracks", "1-3", "--yes",
+                  "--genres-file", str(genres), "--out", str(out)])
+    assert rc == 0
+    files = sorted(out.glob("*.flac"))
+    assert [f.name for f in files] == ["01 - Tone A.flac", "02 - Tone B.flac", "03 - Tone C.flac"]
+    assert FLAC(files[2])["tracktotal"] == ["3"]
