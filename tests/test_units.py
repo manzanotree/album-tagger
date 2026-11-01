@@ -1,3 +1,4 @@
+import argparse
 from collections import Counter
 
 import pytest
@@ -392,3 +393,20 @@ def test_build_genre_map_follows_library_layout():
     assert sa.resolve_genre(["Funk / Soul"], ["Contemporary R&B"], [], rcfg).value == "Funk/Soul/R&B"
     assert sa.resolve_genre(["Folk, World, & Country"], [], [], rcfg).value == "Country"
     assert sa.resolve_genre(["Hip Hop"], ["Boom Bap"], [], rcfg).value == "Hip Hop/Boom Bap"
+
+
+def test_parse_track_list():
+    assert sa.parse_track_list("1-3") == {1, 2, 3}
+    assert sa.parse_track_list("1-2, 5") == {1, 2, 5}
+    for bad in ["", "3-1", "a", "1-", "1,,2"]:
+        with pytest.raises(argparse.ArgumentTypeError):
+            sa.parse_track_list(bad)
+
+
+def test_keep_tracks():
+    tracks = [make_track(1, n, 1.0) for n in range(1, 5)]
+    assert [t.number for t in sa.keep_tracks(tracks, {1, 2})] == [1, 2]
+    with pytest.raises(sa.AppError, match="no track 7"):
+        sa.keep_tracks(tracks, {1, 7})
+    with pytest.raises(sa.AppError, match="--disc"):
+        sa.keep_tracks(tracks + [make_track(2, 1, 1.0)], {1})

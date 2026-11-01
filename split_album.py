@@ -19,6 +19,7 @@ import shutil
 import subprocess
 import sys
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -628,6 +629,17 @@ def parse_pin(text: str) -> tuple[str, float]:
         raise argparse.ArgumentTypeError(str(exc)) from exc
 
 
+def parse_track_list(text: str) -> set[int]:
+    """Parse a --tracks value like "1-12" or "1-10,12"."""
+    numbers: set[int] = set()
+    for part in text.split(","):
+        m = re.fullmatch(r"\s*(\d+)(?:-(\d+))?\s*", part)
+        if not m or int(m[1]) > int(m[2] or m[1]):
+            raise argparse.ArgumentTypeError(f"expected tracks like 1-12 or 1-10,12, got {text!r}")
+        numbers.update(range(int(m[1]), int(m[2] or m[1]) + 1))
+    return numbers
+
+
 def nearest_silence_end(target: float, silences: list[tuple[float, float]],
                         window: float, after: float = -1.0) -> float | None:
     """End of the silence whose end is closest to target, within window."""
@@ -959,6 +971,15 @@ def select_tracks(release: Release, disc: int | None) -> list[Track]:
     return release.media[disc - 1]
 
 
+def keep_tracks(tracks: list[Track], numbers: set[int]) -> list[Track]:
+    if len({t.disc for t in tracks}) > 1:
+        raise AppError("--tracks needs --disc on a multi-disc release")
+    unknown = sorted(numbers - {t.number for t in tracks})
+    if unknown:
+        raise AppError(f"--tracks: release has no track {', '.join(map(str, unknown))}")
+    return [t for t in tracks if t.number in numbers]
+
+
 def compute_starts(args: argparse.Namespace, tracks: list[Track], probe: Probe
                    ) -> tuple[list[float], list[str], dict[int, float]]:
     lengths = [t.length for t in tracks]
@@ -1036,12 +1057,12 @@ def gather_mb_genres(release: Release) -> list[str]:
     return []
 
 
-def build_tags(release: Release, track: Track, genre: str, discogs_id: str | None) -> dict[str, Any]:
-    disc_sizes = {m[0].disc: len(m) for m in release.media if m}
+def build_tags(release: Release, track: Track, tracktotal: int, genre: str,
+               discogs_id: str | None) -> dict[str, Any]:
     return {
         "title": track.title, "artist": track.artist, "album": release.title,
         "albumartist": release.artist, "tracknumber": track.number,
-        "tracktotal": disc_sizes.get(track.disc),
+        "tracktotal": tracktotal,
         "discnumber": track.disc, "disctotal": len(release.media),
         "date": release.date, "originaldate": release.original_date,
         "label": release.label, "catalognumber": release.catno, "genre": genre,
@@ -1115,6 +1136,8 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--start", type=parse_pin, action="append", metavar="TRACK=TIME",
                    help="pin a track start, e.g. 10=41:53.7 or 2-5=3:10. Repeatable")
     p.add_argument("--disc", type=int, help="disc number when the file holds one disc")
+    p.add_argument("--tracks", type=parse_track_list, metavar="LIST",
+                   help="only these MusicBrainz tracks, e.g. 1-12 or 1-10,12")
     p.add_argument("--genre", help="override genre")
     p.add_argument("--decade", action="store_true", help="prefix decade for decade_genres (e.g. 80s/Rock)")
     p.add_argument("--out", type=Path, help="output directory")
@@ -1140,6 +1163,8 @@ def run(args: argparse.Namespace) -> None:
 
     release = fetch_release(args.mbid or search_musicbrainz(src, args.yes))
     tracks = select_tracks(release, args.disc)
+    if args.tracks:
+        tracks = keep_tracks(tracks, args.tracks)
     if not tracks:
         raise AppError("release has no tracks")
     if args.spotify:
@@ -1169,7 +1194,9 @@ def run(args: argparse.Namespace) -> None:
     ]
     out_dir = args.out or default_out_dir(release)
     discogs_id = str(discogs["id"]) if discogs else None
-    all_tags = [build_tags(release, seg.track, genre, discogs_id) for seg in segments]
+    totals = Counter(t.disc for t in tracks)
+    all_tags = [build_tags(release, seg.track, totals[seg.track.disc], genre, discogs_id)
+                for seg in segments]
     print_plan(release, discogs, mb_genres, genre, mode, out_dir, segments, probe, all_tags[0])
     if args.dry_run:
         print_pins(segments, multi_disc)
